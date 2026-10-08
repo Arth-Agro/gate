@@ -63,33 +63,88 @@ $('apiSave').onclick = async () => {
   route();
 };
 
+// Why the server could not be reached, in words a guard can act on. The code in brackets is
+// for whoever fixes it: a screenshot then says exactly what happened.
+const REASON = {
+  TIMEOUT: 'The server did not answer in 90 seconds. It is slow right now; trying again.',
+  NETWORK: 'Could not reach the server. If the internet works, allow Mobile data and Wi-Fi for this app in phone Settings > Apps.',
+  BAD_REPLY: 'The server sent an unexpected answer.',
+};
+const reason = (e) => `${REASON[e.message] || 'Server error.'} [${e.message}] / सर्वर से जवाब नहीं आया`;
+
+function note(id, text, bad) {
+  $(id).textContent = text;
+  $(id).className = bad ? 'msg' : 'msg wait';
+}
+
+// Google wakes the server in 2 to 40 seconds. A running count shows the app is working.
+function ticking(id, text) {
+  const t0 = Date.now(), show = () => note(id, `${text} ${Math.round((Date.now() - t0) / 1000)} s`);
+  show();
+  const t = setInterval(show, 1000);
+  return () => clearInterval(t);
+}
+
+function fillGuards(names) {
+  const keep = $('guard').value;
+  $('guard').innerHTML = '<option value="">Select / चुनें</option>' + names.map((g) => `<option>${esc(g)}</option>`).join('');
+  if (names.includes(keep)) $('guard').value = keep;
+}
+
+// Names saved on the phone show at once; the server's list replaces them when it answers.
+// With no saved names (the phone's first login) it shows progress and keeps retrying.
+let guardRetry;
 async function loadGuards() {
-  $('loginMsg').textContent = '';
+  clearTimeout(guardRetry);
+  const saved = (await Q.kv('guards')) || [];
+  if (saved.length) fillGuards(saved);
+  const stop = saved.length ? () => {} : ticking('loginMsg', 'Connecting to the server… / सर्वर से जुड़ रहे हैं');
   try {
     const r = await Q.call({ action: 'guards' });
-    $('guard').innerHTML = '<option value="">Select / चुनें</option>' + r.guards.map((g) => `<option>${esc(g)}</option>`).join('');
+    stop();
+    if (!saved.length) note('loginMsg', '');
+    await Q.kv('guards', r.guards);
+    fillGuards(r.guards);
   } catch (e) {
-    $('loginMsg').textContent = 'No internet. The first login needs internet. / इंटरनेट चाहिए';
+    stop();
+    if (saved.length) return;
+    note('loginMsg', reason(e), true);
+    guardRetry = setTimeout(() => { if (!$('vLogin').hidden) loadGuards(); }, 10000);
   }
 }
 
 $('loginBtn').onclick = async () => {
   const guard = $('guard').value, pin = $('pin').value.trim();
-  if (!guard || !/^\d{4,8}$/.test(pin)) return ($('loginMsg').textContent = 'Select your name and enter your PIN.');
+  if (!guard || !/^\d{4,8}$/.test(pin)) return note('loginMsg', 'Select your name and enter your PIN.', true);
+  // A guard who has logged in on this phone before is let in at once, even offline.
+  // The server still checks the PIN with every upload, and logs the guard out if it changed.
+  const known = (await Q.kv('known')) || {};
+  if (known[guard] === pin) return enter(guard, pin, await Q.kv('people'));
   $('loginBtn').disabled = true;
+  const stop = ticking('loginMsg', 'Checking PIN with the server… / पिन जांच रहे हैं');
   try {
     const r = await Q.call({ action: 'login', guard, pin });
-    if (!r.ok) return ($('loginMsg').textContent = ERR[r.error] || r.error);
-    await Q.kv('session', { guard: r.guard, pin });
-    await Q.kv('people', r.people);
-    $('pin').value = '';
-    route();
+    stop();
+    if (!r.ok) return note('loginMsg', ERR[r.error] || r.error, true);
+    known[r.guard] = pin;
+    await Q.kv('known', known);
+    enter(r.guard, pin, r.people);
   } catch (e) {
-    $('loginMsg').textContent = 'No internet. Try again when connected. / इंटरनेट नहीं है';
+    stop();
+    note('loginMsg', reason(e), true);
   } finally {
     $('loginBtn').disabled = false;
   }
 };
+
+async function enter(guard, pin, people) {
+  clearTimeout(guardRetry);
+  await Q.kv('session', { guard, pin });
+  if (people) await Q.kv('people', people);
+  $('pin').value = '';
+  note('loginMsg', '');
+  route();
+}
 
 $('pin').onkeydown = (ev) => { if (ev.key === 'Enter') $('loginBtn').click(); };
 
@@ -102,9 +157,12 @@ async function refreshPeople() {
       await Q.kv('people', r.people);
       if (!$('pick').value) fillPeople();
     } else if (r.error === 'BAD_PIN') {
+      const known = (await Q.kv('known')) || {};
+      delete known[S.session.guard];
+      await Q.kv('known', known);
       await Q.kv('session', null);
       await route();
-      $('loginMsg').textContent = 'Please log in again. / दोबारा लॉगिन करें';
+      note('loginMsg', 'Your PIN was changed or switched off. Please log in again. / दोबारा लॉगिन करें', true);
     }
   } catch (e) { /* offline: keep the saved list */ }
 }
@@ -210,6 +268,7 @@ $('submit').onclick = async () => {
 
 $('photoBtn').onclick = async () => {
   locate(); // the location is taken at the same moment as the photo
+  Q.warm(); // wake a sleeping server now, so the upload after Submit is quick
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: S.facing, width: { ideal: 1280 } }, audio: false });
   } catch (e) {
@@ -286,7 +345,10 @@ async function sync() {
   await render();
 }
 
-$('sync').onclick = sync;
+$('sync').onclick = async () => {
+  await sync();
+  if ((await Q.all()).some((r) => !r.sent && !r.bad) && Q.lastError()) toast(reason({ message: Q.lastError() }), true);
+};
 
 async function render() {
   const recs = await Q.all(), today = new Date().toDateString();
