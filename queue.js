@@ -32,7 +32,8 @@ const Q = (() => {
   // text/plain POST: Apps Script answers it cross-origin with no CORS preflight.
   async function call(body) {
     const r = await fetch(await kv('api'), {
-      method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(60000),
+      method: 'POST', body: JSON.stringify(body),
+      signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined,   // older phones lack it
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();

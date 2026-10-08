@@ -11,12 +11,14 @@ let stream = null;
 init();
 
 async function init() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+  // No service worker inside the Android app: its files are already on the phone.
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   await takeSetupLink();
   // A setup link opened in a tab that already shows the app changes only the "#" part: no reload.
   window.addEventListener('hashchange', () => takeSetupLink().then((got) => got && route()));
   window.addEventListener('online', sync);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
   setInterval(sync, 60000);
   route();
 }
@@ -193,7 +195,8 @@ $('submit').onclick = async () => {
   const e = current();
   $('submit').disabled = true;
   await Q.add({
-    id: crypto.randomUUID(), time: new Date().toISOString(), ...e,
+    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2),
+    time: new Date().toISOString(), ...e,
     guard: S.session.guard, lat: S.loc.lat, lng: S.loc.lng, acc: S.loc.acc, photo: S.photo,
   });
   toast(`Saved ✓ ${e.name} ${e.direction} / सेव हो गया`);
@@ -210,7 +213,7 @@ $('photoBtn').onclick = async () => {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: S.facing, width: { ideal: 1280 } }, audio: false });
   } catch (e) {
-    return toast('Camera blocked. Allow the camera for this app in Chrome. / कैमरा की अनुमति दें', true);
+    return toast('Camera blocked. Allow Camera for this app in phone Settings > Apps. / कैमरा की अनुमति दें', true);
   }
   $('video').srcObject = stream;
   $('cam').hidden = false;
@@ -258,8 +261,8 @@ function locate() {
     gps(`📍 ${S.loc.lat}, ${S.loc.lng} (±${S.loc.acc} m)`, 'ok');
     form();
   }, (err) => {
-    gps((err.code === 1 ? 'Location blocked. Allow location for this app in Chrome.' : 'Location not found.') +
-      ' Tap to try again. / फिर से कोशिश करें', 'bad');
+    gps((err.code === 1 ? 'Location blocked. Allow Location for this app in phone Settings > Apps.'
+      : 'Location not found. Is Location (GPS) on?') + ' Tap to try again. / लोकेशन चालू करें, फिर टैप करें', 'bad');
     form();
   }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
 }
