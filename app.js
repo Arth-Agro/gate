@@ -18,7 +18,12 @@ async function init() {
   // A setup link opened in a tab that already shows the app changes only the "#" part: no reload.
   window.addEventListener('hashchange', () => takeSetupLink().then((got) => got && route()));
   window.addEventListener('online', sync);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    sync();
+    // Back from switching Location on: take the missing location for the photo already taken.
+    if (!$('vEntry').hidden && S.photo && !S.loc) locate();
+  });
   setInterval(sync, 60000);
   route();
 }
