@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b5e20">
+<title>Arth Agro Gate</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --g: #1b5e20; --g2: #e8f5e9; --red: #c62828; --red2: #fdecea; --amber: #8a5a00; --amber2: #fff4d6;
+          --ink: #1a1a1a; --mute: #5f6b5f; --line: #cfd8cf; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 17px/1.4 system-ui, Roboto, "Noto Sans Devanagari", sans-serif; color: var(--ink); background: #f5f7f5; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+           padding: 10px 14px; background: var(--g); color: #fff; }
+  header b { flex: 1; min-width: 0; font-size: 18px; white-space: nowrap; }
+  #who { overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  header .pill { flex-shrink: 0; }
+  main { max-width: 520px; margin: 0 auto; padding: 14px 14px 40px; }
+  h2 { margin: 6px 0 12px; font-size: 20px; }
+  h3 { margin: 26px 0 6px; font-size: 15px; color: var(--mute); }
+  small { display: block; font-size: 13px; font-weight: 400; color: inherit; opacity: .75; }
+  label { display: block; margin: 14px 0 0; font-weight: 600; }
+  input, select, textarea { display: block; width: 100%; margin-top: 6px; padding: 12px; font: inherit;
+           border: 2px solid var(--line); border-radius: 10px; background: #fff; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g); }
+  button { font: inherit; cursor: pointer; border: 2px solid var(--line); border-radius: 12px; background: #fff;
+           color: var(--ink); padding: 12px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .seg { display: flex; gap: 10px; margin-top: 14px; }
+  .seg button { flex: 1; font-weight: 700; }
+  .seg button.on { background: var(--g); border-color: var(--g); color: #fff; }
+  .seg.big button { padding: 18px 8px; font-size: 22px; }
+  .seg.big button.on[data-v="OUT"] { background: var(--red); border-color: var(--red); }
+  .wide { display: block; width: 100%; margin-top: 16px; font-weight: 700; }
+  .primary { background: var(--g); border-color: var(--g); color: #fff; padding: 16px; font-size: 20px; }
+  .link { border: 0; background: none; color: var(--mute); text-decoration: underline; margin-top: 18px; padding: 6px 0; }
+  #photo { display: block; width: 100%; max-height: 300px; object-fit: contain; margin-top: 10px; border-radius: 10px; background: #000; }
+  .gps { display: block; width: 100%; margin-top: 10px; padding: 10px; border: 0; border-radius: 10px;
+         background: #eef1ee; color: var(--mute); text-align: left; font-size: 15px; }
+  .gps.ok { background: var(--g2); color: var(--g); }
+  .gps.bad { background: var(--red2); color: var(--red); }
+  .missing { margin: 14px 0 0; color: var(--red); font-size: 15px; min-height: 1.4em; }
+  .msg { color: var(--red); min-height: 1.4em; }
+  .pill { padding: 4px 10px; border: 0; border-radius: 99px; font-size: 13px; font-weight: 700; }
+  .pill.ok { background: var(--g2); color: var(--g); }
+  .pill.wait { background: var(--amber2); color: var(--amber); }
+  #recent { list-style: none; margin: 0; padding: 0; }
+  #recent li { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  #recent li span:nth-child(3) { flex: 1; }
+  #recent .IN { color: var(--g); font-weight: 700; }
+  #recent .OUT { color: var(--red); font-weight: 700; }
+  #recent .err { color: var(--red); }
+  #cam { position: fixed; inset: 0; z-index: 9; background: #000; display: flex; flex-direction: column; }
+  #cam[hidden], [hidden] { display: none !important; }
+  #video { flex: 1; width: 100%; min-height: 0; object-fit: contain; }
+  .camBar { display: flex; justify-content: space-around; align-items: center; padding: 18px 0 28px; }
+  .camBar button { width: 60px; height: 60px; border-radius: 50%; border: 0; background: #333; color: #fff; font-size: 24px; padding: 0; }
+  .camBar #camSnap { width: 78px; height: 78px; background: #fff; border: 6px solid #888; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; max-width: 92%;
+           padding: 12px 18px; border-radius: 12px; background: var(--g); color: #fff; font-weight: 600; text-align: center; }
+  #toast.bad { background: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <b>Arth Agro Gate<small id="who"></small></b>
+  <button id="sync" class="pill" title="Upload now" hidden></button>
+</header>
+
+<main>
+  <section id="vSetup" hidden>
+    <h2>Set up this phone</h2>
+    <p>Open the setup link the admin sent, or paste it here.<small>एडमिन का भेजा हुआ लिंक यहाँ डालें</small></p>
+    <input id="apiIn" placeholder="Setup link" autocomplete="off">
+    <p id="setupMsg" class="msg"></p>
+    <button id="apiSave" class="wide primary">Save</button>
+  </section>
+
+  <section id="vLogin" hidden>
+    <h2>Guard login <small>गार्ड लॉगिन</small></h2>
+    <label>Your name <small>अपना नाम चुनें</small><select id="guard"></select></label>
+    <label>PIN <small>पिन</small><input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+    <p id="loginMsg" class="msg"></p>
+    <button id="loginBtn" class="wide primary">Log in <small>लॉगिन</small></button>
+  </section>
+
+  <section id="vEntry" hidden>
+    <div class="seg" id="cat">
+      <button data-v="Employee">Employee<small>कर्मचारी</small></button>
+      <button data-v="Visitor">Visitor<small>विज़िटर</small></button>
+    </div>
+
+    <label id="pickRow">Name <small>नाम चुनें</small><select id="pick"></select></label>
+    <div id="newRow" hidden>
+      <label>Name <small>नाम लिखें</small><input id="name" maxlength="80" autocomplete="off"></label>
+      <label id="typeRow">Employee type <small>प्रकार</small>
+        <select id="empType">
+          <option value="">Select / चुनें</option>
+          <option value="Regular">Regular / नियमित</option>
+          <option value="Temporary">Temporary / अस्थायी</option>
+          <option value="Other">Other / अन्य</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="seg big" id="dir">
+      <button data-v="IN">IN<small>अंदर</small></button>
+      <button data-v="OUT">OUT<small>बाहर</small></button>
+    </div>
+
+    <button id="photoBtn" class="wide">📷 Take photo <small>फोटो लें</small></button>
+    <img id="photo" hidden alt="Photo">
+    <button id="gps" class="gps" hidden></button>
+
+    <label>Remarks <small id="remarksHint">टिप्पणी (optional)</small><textarea id="remarks" rows="2" maxlength="200"></textarea></label>
+
+    <p id="missing" class="missing"></p>
+    <button id="submit" class="wide primary" disabled>Submit <small>जमा करें</small></button>
+
+    <h3>On this phone today <small>आज की एंट्री</small></h3>
+    <ul id="recent"></ul>
+    <button id="logout" class="link">Change guard / log out</button>
+  </section>
+</main>
+
+<div id="cam" hidden>
+  <video id="video" playsinline muted></video>
+  <div class="camBar">
+    <button id="camClose" aria-label="Close">✕</button>
+    <button id="camSnap" aria-label="Take photo"></button>
+    <button id="camFlip" aria-label="Switch camera">⟲</button>
+  </div>
+</div>
+<div id="toast" hidden></div>
+
+<script src="queue.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
