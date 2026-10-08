@@ -13,15 +13,21 @@ init();
 async function init() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
-  // The setup link is <app>#api=<Apps Script /exec URL>. After "#" it is never sent to the web host.
-  const api = new URLSearchParams(location.hash.slice(1)).get('api');
-  if (api) {
-    await Q.kv('api', api);
-    history.replaceState(null, '', location.pathname);
-  }
+  await takeSetupLink();
+  // A setup link opened in a tab that already shows the app changes only the "#" part: no reload.
+  window.addEventListener('hashchange', () => takeSetupLink().then((got) => got && route()));
   window.addEventListener('online', sync);
   setInterval(sync, 60000);
   route();
+}
+
+// The setup link is <app>#api=<Apps Script /exec URL>. After "#" it is never sent to the web host.
+async function takeSetupLink() {
+  const api = new URLSearchParams(location.hash.slice(1)).get('api');
+  if (!api) return false;
+  await Q.kv('api', api);
+  history.replaceState(null, '', location.pathname);
+  return true;
 }
 
 async function route() {
