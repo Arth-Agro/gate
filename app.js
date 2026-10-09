@@ -24,8 +24,8 @@ async function init() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     sync();
-    // Back from switching Location on: take the missing location for the photo already taken.
-    if (!$('vEntry').hidden && S.photo && !S.loc) locate();
+    // Back in the app (also after switching Location on): refresh a missing or stale location.
+    if (!$('vEntry').hidden && !fresh()) locate();
   });
   setInterval(sync, 60000);
   route();
@@ -57,6 +57,7 @@ async function route() {
   S.roster = (await Q.kv('roster:' + S.session.estate)) || S.roster;
   fillTypes();
   resetForm();
+  if (!fresh()) locate();                 // ready before the first photo
   sync();
   refreshRoster();
 }
@@ -287,17 +288,16 @@ function form() {
   if (!e.type) miss.push('type');
   if (needPurpose && !e.purpose) miss.push('purpose');
   if (!S.photo) miss.push('photo');
-  if (!S.loc) miss.push('location');
+  if (!fresh()) miss.push('location');
   $('missing').textContent = miss.length ? 'Missing / बाकी: ' + miss.join(', ') : '';
   $('submit').disabled = miss.length > 0;
   return miss.length === 0;
 }
 
 function resetForm() {
-  Object.assign(S, { photo: '', loc: null });
+  S.photo = '';                          // the location is kept for the next entry
   for (const id of ['pick', 'name', 'type', 'purpose']) $(id).value = '';
   $('photo').hidden = true;
-  $('gps').hidden = true;
   $('photoBtn').innerHTML = '📷 Take photo <small>फोटो लें</small>';
   form();
 }
@@ -321,8 +321,8 @@ $('submit').onclick = async () => {
 /* ---------- camera: live photo only, there is no gallery option ---------- */
 
 $('photoBtn').onclick = async () => {
-  locate(); // the location is taken at the same moment as the photo
-  Q.warm(); // wake a sleeping server now, so the upload after Submit is quick
+  if (!fresh()) locate(); // normally the kept location is used and nobody waits
+  Q.warm();               // wake a sleeping server now, so the upload after Submit is quick
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: S.facing, width: { ideal: 1280 } }, audio: false });
   } catch (e) {
@@ -365,20 +365,36 @@ function closeCamera() {
 
 /* ---------- location: from the phone's GPS, never typed or picked on a map ---------- */
 
+// Taken when the entry screen opens and kept for 3 minutes (Yashswi, 9 Oct 2026); a photo uses
+// it at once. It is refreshed in the background every 2 minutes while the app is on screen, so
+// it never runs out mid-entry. The guard waits only when there is none yet or it is older than
+// 3 minutes (phone just unlocked). Every entry's location is at most 3 minutes old.
+const FRESH = 180000, REFRESH = 120000;
+const fresh = () => !!S.loc && Date.now() - S.loc.at < FRESH;
+let locating = false;
+
 function locate() {
-  S.loc = null;
-  gps('📍 Getting location… / लोकेशन ली जा रही है', '');
+  if (locating) return;
   if (!navigator.geolocation) return gps('This phone gives no location.', 'bad');
+  locating = true;
+  if (!fresh()) gps('📍 Getting location… / लोकेशन ली जा रही है', '');
   navigator.geolocation.getCurrentPosition((p) => {
-    S.loc = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) };
-    gps(`📍 ${S.loc.lat}, ${S.loc.lng} (±${S.loc.acc} m)`, 'ok');
+    locating = false;
+    S.loc = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy), at: Date.now() };
+    gps(`📍 Location ready · ±${S.loc.acc} m · ${istTime(S.loc.at)} / लोकेशन तैयार`, 'ok');
     form();
   }, (err) => {
+    locating = false;
+    if (fresh()) return;                 // the kept location is still good; try again at the next refresh
     gps((err.code === 1 ? 'Location blocked. Allow Location for this app in phone Settings > Apps.'
       : 'Location not found. Is Location (GPS) on?') + ' Tap to try again. / लोकेशन चालू करें, फिर टैप करें', 'bad');
     form();
   }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
 }
+
+// Refresh in the background while the entry screen is showing. Phones pause timers while the
+// screen is off; coming back to the app refreshes a stale location (see init).
+setInterval(() => { if (!document.hidden && S.session && !$('vEntry').hidden) locate(); }, REFRESH);
 
 function gps(text, cls) {
   const b = $('gps');
