@@ -33,6 +33,8 @@
   .seg button.on { background: var(--g); border-color: var(--g); color: #fff; }
   .seg.big button { padding: 18px 8px; font-size: 22px; }
   .seg.big button.on[data-v="OUT"] { background: var(--red); border-color: var(--red); }
+  #insideCount:not(:empty)::before { content: "("; }
+  #insideCount:not(:empty)::after { content: ")"; }
   .wide { display: block; width: 100%; margin-top: 16px; font-weight: 700; }
   .primary { background: var(--g); border-color: var(--g); color: #fff; padding: 16px; font-size: 20px; }
   .link { border: 0; background: none; color: var(--mute); text-decoration: underline; margin-top: 18px; padding: 6px 0; }
@@ -53,6 +55,12 @@
   #recent .IN { color: var(--g); font-weight: 700; }
   #recent .OUT { color: var(--red); font-weight: 700; }
   #recent .err { color: var(--red); }
+  .info { margin: 8px 0 0; color: var(--mute); font-size: 15px; }
+  #inside { list-style: none; margin: 10px 0 0; padding: 0; }
+  #inside li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  #inside li div { flex: 1; }
+  #inside li small { font-size: 14px; }
+  #inside button { padding: 12px 20px; border-color: var(--red); color: var(--red); font-weight: 700; }
   #cam { position: fixed; inset: 0; z-index: 9; background: #000; display: flex; flex-direction: column; }
   #cam[hidden], [hidden] { display: none !important; }
   #video { flex: 1; width: 100%; min-height: 0; object-fit: contain; }
@@ -81,6 +89,7 @@
 
   <section id="vLogin" hidden>
     <h2>Guard login <small>गार्ड लॉगिन</small></h2>
+    <label>Estate <small>एस्टेट चुनें</small><select id="estate"></select></label>
     <label>Your name <small>अपना नाम चुनें</small><select id="guard"></select></label>
     <label>PIN <small>पिन</small><input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>
     <p id="loginMsg" class="msg"></p>
@@ -88,37 +97,32 @@
   </section>
 
   <section id="vEntry" hidden>
-    <div class="seg" id="cat">
-      <button data-v="Employee">Employee<small>कर्मचारी</small></button>
-      <button data-v="Visitor">Visitor<small>विज़िटर</small></button>
+    <div class="seg big" id="tabs">
+      <button data-v="IN">IN<small>अंदर आए</small></button>
+      <button data-v="OUT">OUT <span id="insideCount"></span><small>बाहर गए</small></button>
     </div>
 
-    <label id="pickRow">Name <small>नाम चुनें</small><select id="pick"></select></label>
-    <div id="newRow" hidden>
-      <label>Name <small>नाम लिखें</small><input id="name" maxlength="80" autocomplete="off"></label>
-      <label id="typeRow">Employee type <small>प्रकार</small>
-        <select id="empType">
-          <option value="">Select / चुनें</option>
-          <option value="Regular">Regular / नियमित</option>
-          <option value="Temporary">Temporary / अस्थायी</option>
-          <option value="Other">Other / अन्य</option>
-        </select>
-      </label>
+    <div id="pIn">
+      <label>Name <small>नाम चुनें</small><select id="pick"></select></label>
+      <p id="info" class="info"></p>
+      <div id="newRow" hidden>
+        <label>Name <small>नाम लिखें</small><input id="name" maxlength="80" autocomplete="off"></label>
+        <label>Type <small>कौन है</small><select id="type"></select></label>
+      </div>
+      <label id="purposeRow" hidden>Purpose <small>आने का कारण (required)</small><textarea id="purpose" rows="2" maxlength="200"></textarea></label>
+
+      <button id="photoBtn" class="wide">📷 Take photo <small>फोटो लें</small></button>
+      <img id="photo" hidden alt="Photo">
+      <button id="gps" class="gps" hidden></button>
+
+      <p id="missing" class="missing"></p>
+      <button id="submit" class="wide primary" disabled>Submit IN <small>अंदर दर्ज करें</small></button>
     </div>
 
-    <div class="seg big" id="dir">
-      <button data-v="IN">IN<small>अंदर</small></button>
-      <button data-v="OUT">OUT<small>बाहर</small></button>
+    <div id="pOut" hidden>
+      <p class="info">Inside now. Tap OUT when a person leaves: no photo needed. <small>अभी अंदर हैं। जाने पर OUT दबाएं।</small></p>
+      <ul id="inside"></ul>
     </div>
-
-    <button id="photoBtn" class="wide">📷 Take photo <small>फोटो लें</small></button>
-    <img id="photo" hidden alt="Photo">
-    <button id="gps" class="gps" hidden></button>
-
-    <label>Remarks <small id="remarksHint">टिप्पणी (optional)</small><textarea id="remarks" rows="2" maxlength="200"></textarea></label>
-
-    <p id="missing" class="missing"></p>
-    <button id="submit" class="wide primary" disabled>Submit <small>जमा करें</small></button>
 
     <h3>On this phone today <small>आज की एंट्री</small></h3>
     <ul id="recent"></ul>

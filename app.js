@@ -1,7 +1,10 @@
-// The guard's screen. Flow: person -> IN/OUT -> photo (location is taken with it) -> Submit.
-// Submit saves on the phone first (queue.js), then uploads; nothing waits for the internet.
+// The guard's screen, for one estate.
+//   IN:  pick a registered person (or "+ New person": name, type), purpose unless a siri, photo
+//        (location taken with it), Submit.
+//   OUT: the people inside today; tap OUT. No photo, no location: only the time.
+// Everything is saved on the phone first (queue.js), then uploaded; nothing waits for the internet.
 const $ = (id) => document.getElementById(id);
-const S = { session: null, people: [], cat: 'Employee', dir: '', photo: '', loc: null, facing: 'environment' };
+const S = { session: null, roster: { people: [], types: [], noPurpose: [] }, tab: 'IN', photo: '', loc: null, facing: 'environment' };
 const ERR = {
   BAD_PIN: 'Wrong PIN, or this guard is switched off. / गलत पिन',
   LOCKED: 'Too many wrong PINs. Try again in 15 minutes. / 15 मिनट बाद कोशिश करें',
@@ -40,6 +43,7 @@ async function takeSetupLink() {
 async function route() {
   const api = await Q.kv('api');
   S.session = await Q.kv('session');
+  if (S.session && !S.session.estate) S.session = null;     // a login from before estates: log in again
   for (const v of ['vSetup', 'vLogin', 'vEntry']) $(v).hidden = true;
   $('who').textContent = '';
   $('sync').hidden = true;
@@ -49,12 +53,12 @@ async function route() {
     return loadGuards();
   }
   $('vEntry').hidden = false;
-  $('who').textContent = S.session.guard;
-  S.people = (await Q.kv('people')) || [];
-  fillPeople();
+  $('who').textContent = `${S.session.guard} · ${S.session.estate}`;
+  S.roster = (await Q.kv('roster:' + S.session.estate)) || S.roster;
+  fillTypes();
   resetForm();
   sync();
-  refreshPeople();
+  refreshRoster();
 }
 
 /* ---------- setup and login ---------- */
@@ -90,18 +94,26 @@ function ticking(id, text) {
   return () => clearInterval(t);
 }
 
-function fillGuards(names) {
-  const keep = $('guard').value;
+// The estate is picked first; the name list then shows that estate's guards only.
+function fillGuards(guards) {
+  guards = guards.filter((g) => g && g.estate);             // lists saved before estates are ignored
+  const estates = [...new Set(guards.map((g) => g.estate))].sort();
+  const keepE = $('estate').value, keepG = $('guard').value;
+  $('estate').innerHTML = '<option value="">Select / चुनें</option>' + estates.map((e) => `<option>${esc(e)}</option>`).join('');
+  $('estate').value = estates.includes(keepE) ? keepE : estates.length === 1 ? estates[0] : '';
+  const names = guards.filter((g) => g.estate === $('estate').value).map((g) => g.name);
   $('guard').innerHTML = '<option value="">Select / चुनें</option>' + names.map((g) => `<option>${esc(g)}</option>`).join('');
-  if (names.includes(keep)) $('guard').value = keep;
+  if (names.includes(keepG)) $('guard').value = keepG;
 }
+
+$('estate').oninput = async () => fillGuards((await Q.kv('guards')) || []);
 
 // Names saved on the phone show at once; the server's list replaces them when it answers.
 // With no saved names (the phone's first login) it shows progress and keeps retrying.
 let guardRetry;
 async function loadGuards() {
   clearTimeout(guardRetry);
-  const saved = (await Q.kv('guards')) || [];
+  const saved = ((await Q.kv('guards')) || []).filter((g) => g && g.estate);
   if (saved.length) fillGuards(saved);
   const stop = saved.length ? () => {} : ticking('loginMsg', 'Connecting to the server… / सर्वर से जुड़ रहे हैं');
   try {
@@ -120,20 +132,21 @@ async function loadGuards() {
 
 $('loginBtn').onclick = async () => {
   const guard = $('guard').value, pin = $('pin').value.trim();
-  if (!guard || !/^\d{4,8}$/.test(pin)) return note('loginMsg', 'Select your name and enter your PIN.', true);
+  if (!$('estate').value || !guard || !/^\d{4,8}$/.test(pin)) return note('loginMsg', 'Select estate and name, and enter your PIN.', true);
   // A guard who has logged in on this phone before is let in at once, even offline.
   // The server still checks the PIN with every upload, and logs the guard out if it changed.
   const known = (await Q.kv('known')) || {};
-  if (known[guard] === pin) return enter(guard, pin, await Q.kv('people'));
+  if (known[guard] && known[guard].pin === pin) return enter(guard, pin, known[guard].estate);
   $('loginBtn').disabled = true;
   const stop = ticking('loginMsg', 'Checking PIN with the server… / पिन जांच रहे हैं');
   try {
     const r = await Q.call({ action: 'login', guard, pin });
     stop();
     if (!r.ok) return note('loginMsg', ERR[r.error] || r.error, true);
-    known[r.guard] = pin;
+    await keep(r);
+    known[r.guard] = { pin, estate: r.estate };
     await Q.kv('known', known);
-    enter(r.guard, pin, r.people);
+    enter(r.guard, pin, r.estate);
   } catch (e) {
     stop();
     note('loginMsg', reason(e), true);
@@ -142,25 +155,31 @@ $('loginBtn').onclick = async () => {
   }
 };
 
-async function enter(guard, pin, people) {
+$('pin').onkeydown = (ev) => { if (ev.key === 'Enter') $('loginBtn').click(); };
+
+// The estate's people, the types, and the server's view of who is inside, kept on the phone.
+async function keep(r) {
+  await Q.kv('roster:' + r.estate, { people: r.people, types: r.types, noPurpose: r.noPurpose });
+  await Q.kv('inside:' + r.estate, r.inside);
+}
+
+async function enter(guard, pin, estate) {
   clearTimeout(guardRetry);
-  await Q.kv('session', { guard, pin });
-  if (people) await Q.kv('people', people);
+  await Q.kv('session', { guard, pin, estate });
   $('pin').value = '';
   note('loginMsg', '');
   route();
 }
 
-$('pin').onkeydown = (ev) => { if (ev.key === 'Enter') $('loginBtn').click(); };
-
-// When online, pick up changes the admin made to the People list, and notice a PIN that was changed.
-async function refreshPeople() {
+// When online: pick up changes to People, the inside list from other phones, and a changed PIN.
+async function refreshRoster() {
   try {
     const r = await Q.call({ action: 'login', guard: S.session.guard, pin: S.session.pin });
     if (r.ok) {
-      S.people = r.people;
-      await Q.kv('people', r.people);
-      if (!$('pick').value) fillPeople();
+      await keep(r);
+      S.roster = await Q.kv('roster:' + r.estate);
+      if (!$('pick').value) fillTypes();
+      show();
     } else if (r.error === 'BAD_PIN') {
       const known = (await Q.kv('known')) || {};
       delete known[S.session.guard];
@@ -169,7 +188,7 @@ async function refreshPeople() {
       await route();
       note('loginMsg', 'Your PIN was changed or switched off. Please log in again. / दोबारा लॉगिन करें', true);
     }
-  } catch (e) { /* offline: keep the saved list */ }
+  } catch (e) { /* offline: keep the saved lists */ }
 }
 
 $('logout').onclick = async () => {
@@ -179,51 +198,94 @@ $('logout').onclick = async () => {
   route();
 };
 
-/* ---------- the entry form ---------- */
+/* ---------- who is inside ---------- */
 
-function fillPeople() {
+const istDay = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const istTime = (t) => new Date(t).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+
+// Today's INs at this estate with no OUT: the server's list (which knows other phones) plus
+// this phone's own entries, uploaded or not, minus everyone this phone has marked OUT.
+async function insideNow() {
+  const today = istDay(Date.now()), estate = S.session.estate;
+  const mine = (await Q.all()).filter((r) => !r.bad && r.entry.estate === estate).map((r) => r.entry);
+  const closed = new Set(mine.filter((e) => e.direction === 'OUT').map((e) => e.inId));
+  const all = new Map();
+  for (const r of (await Q.kv('inside:' + estate)) || []) if (r.date === today) all.set(r.id, { ...r, time: r.time.slice(0, 5) });
+  for (const e of mine) {
+    if (e.direction === 'IN' && istDay(e.time) === today) {
+      all.set(e.id, { id: e.id, name: e.name, type: e.type, polyhouse: e.polyhouse || '', time: istTime(e.time) });
+    }
+  }
+  return [...all.values()].filter((r) => !closed.has(r.id)).sort((a, b) => (a.time < b.time ? -1 : 1));
+}
+
+$('tabs').onclick = (ev) => {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  S.tab = b.dataset.v;
+  showTab();     // at once; the lists follow
+  show();
+};
+
+function showTab() {
+  for (const b of $('tabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === S.tab);
+  $('pIn').hidden = S.tab !== 'IN';
+  $('pOut').hidden = S.tab !== 'OUT';
+}
+
+$('inside').onclick = async (ev) => {
+  const b = ev.target.closest('button[data-id]');
+  if (!b) return;
+  const r = (await insideNow()).find((x) => x.id === b.dataset.id);
+  if (!r || !confirm(`${r.name}: OUT? / बाहर?`)) return;
+  await Q.add({ id: newId(), time: new Date().toISOString(), direction: 'OUT', inId: r.id, estate: S.session.estate,
+    guard: S.session.guard, name: r.name, type: r.type, polyhouse: r.polyhouse });
+  toast(`OUT ✓ ${r.name} / बाहर दर्ज`);
+  sync();
+};
+
+/* ---------- IN ---------- */
+
+const label = (p) => [p.name, p.polyhouse, p.type].filter(Boolean).join(' · ');
+
+function fillTypes() {
+  $('type').innerHTML = '<option value="">Select / चुनें</option>' +
+    S.roster.types.map((t) => `<option>${esc(t)}</option>`).join('');
+}
+
+// Registered people of this estate who are not inside; anyone else is a "New person".
+function fillPick(inside) {
+  const inNames = new Set(inside.map((r) => r.name)), keep = $('pick').value;
   $('pick').innerHTML = '<option value="">Select name / नाम चुनें</option>' +
-    S.people.map((p, i) => `<option value="${i}">${esc(p.name)} · ${esc(p.type)}</option>`).join('') +
+    S.roster.people.map((p, i) => (inNames.has(p.name) ? '' : `<option value="${i}">${esc(label(p))}</option>`)).join('') +
     '<option value="new">+ New person / नया व्यक्ति</option>';
+  if ([...$('pick').options].some((o) => o.value === keep)) $('pick').value = keep;
 }
 
-function seg(id, value) {
-  for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === value);
+for (const id of ['pick', 'name', 'type', 'purpose']) $(id).oninput = form;
+
+function current() {
+  const pick = $('pick').value, p = pick !== '' && pick !== 'new' ? S.roster.people[pick] : null;
+  return {
+    name: p ? p.name : pick === 'new' ? $('name').value.trim() : '',
+    type: p ? p.type : pick === 'new' ? $('type').value : '',
+    polyhouse: p ? p.polyhouse : '',
+    registered: !!p,
+    purpose: $('purpose').value.trim(),
+  };
 }
-
-$('cat').onclick = (ev) => {
-  const b = ev.target.closest('button');
-  if (!b) return;
-  S.cat = b.dataset.v;
-  $('pick').value = '';
-  $('name').value = '';
-  $('empType').value = '';
-  form();
-};
-
-$('dir').onclick = (ev) => {
-  const b = ev.target.closest('button');
-  if (!b) return;
-  S.dir = b.dataset.v;
-  form();
-};
-
-for (const id of ['pick', 'name', 'empType', 'remarks']) $(id).oninput = form;
 
 // Shows the fields that apply and enables Submit only when nothing compulsory is missing.
+// Purpose is compulsory for everyone except Primary and Secondary Siris.
 function form() {
-  const emp = S.cat === 'Employee', isNew = !emp || $('pick').value === 'new';
-  seg('cat', S.cat);
-  seg('dir', S.dir);
-  $('pickRow').hidden = !emp;
-  $('newRow').hidden = !isNew;
-  $('typeRow').hidden = !emp;
-  $('remarksHint').textContent = emp ? 'टिप्पणी (optional)' : 'Reason for visit / आने का कारण (optional)';
-
-  const e = current(), miss = [];
+  const e = current(), needPurpose = !!e.type && !S.roster.noPurpose.includes(e.type);
+  $('newRow').hidden = $('pick').value !== 'new';
+  $('info').textContent = e.registered ? [e.type, e.polyhouse && `Polyhouse ${e.polyhouse}`].filter(Boolean).join(' · ') : '';
+  $('purposeRow').hidden = !needPurpose;
+  const miss = [];
   if (!e.name) miss.push('name');
-  if (emp && !e.empType) miss.push('type');
-  if (!e.direction) miss.push('IN/OUT');
+  if (!e.type) miss.push('type');
+  if (needPurpose && !e.purpose) miss.push('purpose');
   if (!S.photo) miss.push('photo');
   if (!S.loc) miss.push('location');
   $('missing').textContent = miss.length ? 'Missing / बाकी: ' + miss.join(', ') : '';
@@ -231,22 +293,9 @@ function form() {
   return miss.length === 0;
 }
 
-function current() {
-  const emp = S.cat === 'Employee', pick = $('pick').value;
-  const p = emp && pick !== '' && pick !== 'new' ? S.people[pick] : null;
-  return {
-    category: S.cat,
-    name: p ? p.name : $('name').value.trim(),
-    fromList: !!p,
-    empType: emp ? (p ? p.type : $('empType').value) : '',
-    direction: S.dir,
-    remarks: $('remarks').value.trim(),
-  };
-}
-
 function resetForm() {
-  Object.assign(S, { cat: 'Employee', dir: '', photo: '', loc: null });
-  for (const id of ['pick', 'name', 'empType', 'remarks']) $(id).value = '';
+  Object.assign(S, { photo: '', loc: null });
+  for (const id of ['pick', 'name', 'type', 'purpose']) $(id).value = '';
   $('photo').hidden = true;
   $('gps').hidden = true;
   $('photoBtn').innerHTML = '📷 Take photo <small>फोटो लें</small>';
@@ -255,14 +304,14 @@ function resetForm() {
 
 $('submit').onclick = async () => {
   if (!form()) return;
-  const e = current();
+  const e = current(), needPurpose = !S.roster.noPurpose.includes(e.type);
   $('submit').disabled = true;
   await Q.add({
-    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2),
-    time: new Date().toISOString(), ...e,
-    guard: S.session.guard, lat: S.loc.lat, lng: S.loc.lng, acc: S.loc.acc, photo: S.photo,
+    id: newId(), time: new Date().toISOString(), direction: 'IN', estate: S.session.estate, guard: S.session.guard,
+    name: e.name, type: e.type, polyhouse: e.polyhouse, registered: e.registered, purpose: needPurpose ? e.purpose : '',
+    lat: S.loc.lat, lng: S.loc.lng, acc: S.loc.acc, photo: S.photo,
   });
-  toast(`Saved ✓ ${e.name} ${e.direction} / सेव हो गया`);
+  toast(`IN ✓ ${e.name} / अंदर दर्ज`);
   resetForm();
   scrollTo(0, 0);
   if (navigator.serviceWorker) navigator.serviceWorker.ready.then((r) => r.sync && r.sync.register('upload')).catch(() => {});
@@ -341,13 +390,13 @@ function gps(text, cls) {
 
 $('gps').onclick = locate;
 
-/* ---------- upload status ---------- */
+/* ---------- the screen and upload status ---------- */
 
 async function sync() {
   if (!S.session) return;
-  await render();
+  await show();
   await Q.flush();
-  await render();
+  await show();
 }
 
 $('sync').onclick = async () => {
@@ -355,22 +404,33 @@ $('sync').onclick = async () => {
   if ((await Q.all()).some((r) => !r.sent && !r.bad) && Q.lastError()) toast(reason({ message: Q.lastError() }), true);
 };
 
-async function render() {
-  const recs = await Q.all(), today = new Date().toDateString();
+async function show() {
+  if (!S.session) return;
+  showTab();
+  const inside = await insideNow(), recs = await Q.all(), today = istDay(Date.now());
+  $('insideCount').textContent = inside.length || '';
+  fillPick(inside);
+  form();
+  $('inside').innerHTML = inside.map((r) => `<li><div><b>${esc(r.name)}</b><small>` +
+    `${esc([r.type, r.polyhouse && 'P: ' + r.polyhouse, 'in ' + r.time].filter(Boolean).join(' · '))}</small></div>` +
+    `<button data-id="${esc(r.id)}">OUT</button></li>`).join('') || '<li>Nobody inside / कोई अंदर नहीं</li>';
+
   const waiting = recs.filter((r) => !r.sent).length;
   $('sync').hidden = false;
   $('sync').className = 'pill ' + (waiting ? 'wait' : 'ok');
   $('sync').textContent = waiting ? `⏳ ${waiting} to upload` : '✓ All uploaded';
   $('recent').innerHTML = recs
-    .filter((r) => new Date(r.entry.time).toDateString() === today)
+    .filter((r) => istDay(r.entry.time) === today && r.entry.estate === S.session.estate)
     .sort((a, b) => (a.entry.time < b.entry.time ? 1 : -1))
-    .map((r) => `<li><span>${new Date(r.entry.time).toTimeString().slice(0, 5)}</span>` +
+    .map((r) => `<li><span>${istTime(r.entry.time)}</span>` +
       `<span class="${r.entry.direction}">${r.entry.direction}</span><span>${esc(r.entry.name)}</span>` +
       `<span${r.error ? ' class="err"' : ''}>${r.sent ? '✓' : r.error ? '⚠ ' + esc(r.error) : '⏳'}</span></li>`)
     .join('') || '<li>None yet</li>';
 }
 
 /* ---------- small helpers ---------- */
+
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 let toastTimer;
 function toast(text, bad) {

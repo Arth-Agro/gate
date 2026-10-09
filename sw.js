@@ -18,9 +18,11 @@ self.addEventListener('activate', (e) => {
 
 // App files: answer from the cache at once, refresh the cache in the background
 // (asking the server, not the browser's HTTP cache). A code update shows on the second opening.
+const APP = new Set(FILES.map((f) => new URL(f, self.registration.scope).pathname));
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || !APP.has(url.pathname)) return;   // the app's own files only
   const key = url.pathname;   // one cache entry per file, whatever the query string
   const net = caches.open(CACHE).then((c) => fetch(e.request, { cache: 'no-cache' }).then((r) => {
     if (r.ok && !r.redirected) return c.put(key, r.clone()).then(() => r);
